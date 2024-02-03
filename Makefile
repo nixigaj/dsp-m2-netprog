@@ -16,5 +16,11 @@ bin-dir:
 $(TARGET): bin-dir $(SRC)
 	@gcc -g $(SRC) -o $(BIN_DIR)/$(TARGET)
 
+run: $(TARGET)
+	@./$(BIN_DIR)/$(TARGET)
+
+run-valgrind: $(TARGET)
+	@valgrind --track-origins=yes --leak-check=full --show-leak-kinds=all ./$(BIN_DIR)/$(TARGET)
+
 clean:
 	@rm -rf $(BUILD_DIR)

@@ -2,15 +2,15 @@
 // Handle multiple socket connections with select and fd_set on Linux
 
 #include <stdio.h>
-#include <string.h>  //strlen
+#include <string.h>  // strlen
 #include <stdlib.h>
 #include <errno.h>
-#include <unistd.h>  //close
-#include <arpa/inet.h>  //close
+#include <unistd.h>  // close
+#include <arpa/inet.h>  // close
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/time.h>  //FD_SET, FD_ISSET, FD_ZERO macros
+#include <sys/time.h>  // FD_SET, FD_ISSET, FD_ZERO macros
 
 #define TRUE   1
 #define FALSE  0
@@ -53,10 +53,10 @@ int main(void) {
 
 	// type of socket created
 	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_addr.s_addr = INADDR_ANY; // 0.0.0.0
 	address.sin_port = htons(PORT);
 
-	// bind the socket to localhost port 8888
+	// bind the socket to 0.0.0.0:8888
 	if (bind(master_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);

@@ -1,10 +1,11 @@
-// Example code: A simple server side code, which echos back the received message.
+// Example code: A simple server side code, which echoes back the received message.
 // Handle multiple socket connections with select and fd_set on Linux
 
 #include <stdio.h>
 #include <string.h>  // strlen
 #include <stdlib.h>
 #include <errno.h>
+#include <signal.h>
 #include <unistd.h>  // close
 #include <arpa/inet.h>  // close
 #include <sys/types.h>
@@ -15,11 +16,20 @@
 #define TRUE   1
 #define FALSE  0
 #define PORT 8888
+#define MAX_CLIENTS 30
+
+static volatile int shutdown_server = FALSE;
+
+static void send_all_client(const int *clients_fd, const char *msg);
+static void release_client(int sd, struct sockaddr_in *address, int addrlen);
+static void shutdown_handler(int s);
 
 int main(void) {
+	signal(SIGINT, shutdown_handler);
+	signal(SIGTERM, shutdown_handler);
+
 	int opt = TRUE;
-	int master_socket, addrlen, new_socket, client_socket[30], i, valread, sd;
-	const int max_clients = 30;
+	int master_socket, addrlen, new_socket, client_socket[MAX_CLIENTS], i, valread, sd;
 	struct sockaddr_in address;
 
 	char buffer[1025];  // data buffer of 1K
@@ -27,10 +37,8 @@ int main(void) {
 	// set of socket descriptors
 	fd_set readfds;
 
-	// a message
-
 	// initialise all client_socket[] to 0 so not checked
-	for (i = 0; i < max_clients; i++) {
+	for (i = 0; i < MAX_CLIENTS; i++) {
 		client_socket[i] = 0;
 	}
 
@@ -46,18 +54,21 @@ int main(void) {
 		master_socket,
 		SOL_SOCKET,
 		SO_REUSEADDR,
-		(char *) &opt, sizeof(opt)) < 0) {
+		(char *) &opt, sizeof(opt)) < 0)
+	{
 		perror("setsockopt");
 		exit(EXIT_FAILURE);
 	}
 
 	// type of socket created
-	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = INADDR_ANY; // 0.0.0.0
+	address.sin_family = AF_INET; // IPv4
+	// Will accept incoming connections from any IP as
+	// long as the correct port is open in the firewall
+	address.sin_addr.s_addr = htonl(0x00000000); // 0.0.0.0
 	address.sin_port = htons(PORT);
 
-	// bind the socket to 0.0.0.0:8888
-	if (bind(master_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
+	// bind the socket to the address
+	if (bind(master_socket, (struct sockaddr *) &address, sizeof(address)) < 0) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);
 	}
@@ -71,7 +82,7 @@ int main(void) {
 
 	// accept the incoming connection
 	addrlen = sizeof(address);
-	puts("Waiting for connections ...");
+	puts("Waiting for connections...");
 
 	while (TRUE) {
 		// clear the socket set
@@ -82,17 +93,19 @@ int main(void) {
 		int max_sd = master_socket;
 
 		// add child sockets to set
-		for (i = 0; i < max_clients; i++) {
+		for (i = 0; i < MAX_CLIENTS; i++) {
 			// socket descriptor
 			sd = client_socket[i];
 
 			// if valid socket descriptor then add to read list
-			if(sd > 0)
+			if (sd > 0) {
 				FD_SET(sd, &readfds);
+			}
 
-			//highest file descriptor number, need it for the select function
-			if(sd > max_sd)
+			// highest file descriptor number, need it for the select function
+			if (sd > max_sd) {
 				max_sd = sd;
+			}
 		}
 
 		// wait for an activity on one of the sockets, timeout is NULL,
@@ -103,13 +116,33 @@ int main(void) {
 			printf("select error");
 		}
 
+		// The select function above will stop blocking when it encounters a SIGINT or SIGTERM
+		if (shutdown_server) {
+			for (i = 0; i < MAX_CLIENTS; i++) {
+				// socket descriptor
+				sd = client_socket[i];
+
+				// if valid socket descriptor then send exit message and close
+				if (sd > 0) {
+					const char *exit_msg = "shutting down, goodbye\n";
+					send(sd, exit_msg, strlen(exit_msg), 0);
+					close(sd);
+				}
+			}
+			close(master_socket);
+			exit(0);
+		}
+
 		// If something happened on the master socket,
-		// then its an incoming connection
+		// then it is an incoming connection
 		if (FD_ISSET(master_socket, &readfds)) {
+			// Introductory message
 			const char *message = "ECHO Daemon v1.0 \r\n";
+
 			if ((new_socket = accept(master_socket,
-				(struct sockaddr *)&address,
-				(socklen_t*)&addrlen)) < 0) {
+				(struct sockaddr *) &address,
+				(socklen_t*) &addrlen)) < 0)
+			{
 				perror("accept");
 				exit(EXIT_FAILURE);
 			}
@@ -117,8 +150,8 @@ int main(void) {
 			// inform user of socket number - used in send and receive commands
 			printf("New connection, socket fd is %d, ip is: %s, port: %d\n",
 				new_socket,
-				inet_ntoa(address.sin_addr), ntohs
-				(address.sin_port));
+				inet_ntoa(address.sin_addr),
+				ntohs(address.sin_port));
 
 			// send new connection greeting message
 			if (send(new_socket, message, strlen(message), 0) != strlen(message)) {
@@ -128,9 +161,9 @@ int main(void) {
 			puts("Welcome message sent successfully");
 
 			// add new socket to array of sockets
-			for (i = 0; i < max_clients; i++) {
+			for (i = 0; i < MAX_CLIENTS; i++) {
 				// if position is empty
-				if(client_socket[i] == 0) {
+				if (client_socket[i] == 0) {
 					client_socket[i] = new_socket;
 					printf("Adding to list of sockets as %d\n", i);
 
@@ -140,32 +173,81 @@ int main(void) {
 		}
 
 		// else its some IO operation on some other socket
-		for (i = 0; i < max_clients; i++) {
+		for (i = 0; i < MAX_CLIENTS; i++) {
 			sd = client_socket[i];
 
-			if (FD_ISSET(sd, &readfds)) {
-				// Check if it was for closing, and also read the
-				// incoming message
-				if ((valread = read(sd, buffer, 1024)) == 0) {
-					// Somebody disconnected, get his details and print
-					getpeername(sd, (struct sockaddr*)&address,
-						(socklen_t*)&addrlen);
-					printf("Host disconnected, ip %s, port %d \n",
-						inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-
-					// Close the socket and mark as 0 in list for reuse
-					close(sd);
-					client_socket[i] = 0;
-				}
-
-				// Echo back the message that came in
-				else {
-					// set the string terminating NULL byte on the end
-					// of the data read
-					buffer[valread] = '\0';
-					send(sd, buffer, strlen(buffer), 0);
-				}
+			// Check if the client socket can be read from
+			if (!(FD_ISSET(sd, &readfds))) {
+				continue;
 			}
+
+			// Check if it was for closing, and also read the
+			// incoming message
+			if ((valread = read(sd, buffer, 1024)) == 0) {
+				// Somebody disconnected, close socket
+				release_client(sd, &address, addrlen);
+				client_socket[i] = 0;
+
+				continue;
+			}
+
+			// Handle message
+			// set the string terminating NULL byte on the end
+			// of the data read
+			buffer[valread] = '\0';
+
+			// It is not a control command
+			if (buffer[0] != '#') {
+				// Echo back the message that came in
+				send(sd, buffer, strlen(buffer), 0);
+				continue;
+			}
+
+			if (strcmp(buffer, "#quit\n") == 0 ||
+				strcmp(buffer, "#quit\r\n") == 0)
+			{
+				// Command to disconnect, close socket
+				release_client(sd, &address, addrlen);
+				client_socket[i] = 0;
+				continue;
+			}
+
+			if (strncmp(buffer, "#say ", 5) == 0) {
+				send_all_client(client_socket, buffer + 5);
+				continue;
+			}
+
+			// Invalid command
+			const char *invalid_command_msg = "unknown control command\n";
+			send(sd, invalid_command_msg, strlen(invalid_command_msg), 0);
 		}
 	}
+}
+
+static void send_all_client(const int *clients_fd, const char *msg) {
+	for (int i = 0; i < MAX_CLIENTS; i++) {
+		// socket descriptor
+		const int sd = clients_fd[i];
+
+		// if valid socket descriptor then send message
+		if (sd > 0) {
+			send(sd, msg, strlen(msg), 0);
+		}
+	}
+}
+
+static void release_client(const int sd, struct sockaddr_in *address, int addrlen) {
+	// Get socket details and print
+	getpeername(sd, (struct sockaddr*) address,
+		(socklen_t*) &addrlen);
+	printf("Host disconnected, ip %s, port %d \n",
+		inet_ntoa(address->sin_addr), ntohs(address->sin_port));
+
+	// Close the socket and mark as 0 in list for reuse
+	close(sd);
+}
+
+static void shutdown_handler(const int s) {
+	printf("Recieved exit signal %d, exiting...\n", s);
+	shutdown_server = TRUE;
 }

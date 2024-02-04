@@ -113,7 +113,7 @@ int main(void) {
 		const int activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
 
 		if (activity < 0 && errno != EINTR) {
-			printf("select error");
+			printf("select error\n");
 		}
 
 		// The select function above will stop blocking when it encounters a SIGINT or SIGTERM

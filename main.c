@@ -18,7 +18,7 @@
 #define PORT 8888
 #define MAX_CLIENTS 30
 
-static volatile int shutdown_server = FALSE;
+static volatile __sig_atomic_t shutdown_server = FALSE;
 
 static void send_all_client(const int *clients_fd, const char *msg);
 static void release_client(int sd, struct sockaddr_in *address, int addrlen);
@@ -43,7 +43,7 @@ int main(void) {
 	}
 
 	// create a master socket
-	if ((master_socket = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+	if ((master_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		perror("socket failed");
 		exit(EXIT_FAILURE);
 	}
@@ -64,7 +64,7 @@ int main(void) {
 	address.sin_family = AF_INET; // IPv4
 	// Will accept incoming connections from any IP as
 	// long as the correct port is open in the firewall
-	address.sin_addr.s_addr = htonl(0x00000000); // 0.0.0.0
+	address.sin_addr.s_addr = INADDR_ANY; // 0.0.0.0
 	address.sin_port = htons(PORT);
 
 	// bind the socket to the address

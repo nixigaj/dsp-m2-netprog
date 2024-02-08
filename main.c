@@ -15,7 +15,7 @@
 
 #define TRUE   1
 #define FALSE  0
-#define PORT 8888
+#define PORT 31337  // Netcat default
 #define MAX_CLIENTS 30
 
 static volatile __sig_atomic_t shutdown_server = FALSE;
@@ -23,10 +23,12 @@ static volatile __sig_atomic_t shutdown_server = FALSE;
 static void send_all_client(const int *clients_fd, const char *msg);
 static void release_client(int sd, struct sockaddr_in *address, int addrlen);
 static void shutdown_handler(int s);
+static void sigpipe_handler(int s);
 
 int main(void) {
 	signal(SIGINT, shutdown_handler);
 	signal(SIGTERM, shutdown_handler);
+	signal(SIGPIPE, sigpipe_handler);
 
 	int opt = TRUE;
 	int master_socket, addrlen, new_socket, client_socket[MAX_CLIENTS], i, valread, sd;
@@ -250,4 +252,9 @@ static void release_client(const int sd, struct sockaddr_in *address, int addrle
 static void shutdown_handler(const int s) {
 	printf("Recieved exit signal %d, exiting...\n", s);
 	shutdown_server = TRUE;
+}
+
+// Do not want the server to die just because of a broken client
+static void sigpipe_handler(__attribute_maybe_unused__ int s) {
+	puts("Error: broken pipe");
 }
